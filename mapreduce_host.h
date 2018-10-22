@@ -8,7 +8,7 @@
 #include <string>
 #include <sys/time.h>
 #include <unistd.h>
-#include <pthread.h>
+#include <omp.h>
 #include <utility>
 #include <algorithm>
 #include <vector>
@@ -95,13 +95,14 @@ void mapreduce(std::vector<keytype> input_reader (void*), std::pair<keytype, val
     /* MAPPER: */
     vector<pair<keytype, valuetype> > mapped_kv_pairs;
     void* ret;
-    pthread_t threads[NUM_CORES];
+    /*pthread_t threads[NUM_CORES];*/
     vector<pair<keytype, valuetype> > threaded_mapfunc_retvals[NUM_CORES];
 
     
     threaded_map_func_input<keytype, valuetype>* mapper_inputs[NUM_CORES];
 
-    for (int i = 0; i < NUM_CORES; ++i){
+    #pragma omp parallel for
+    for (unsigned int i = 0; i < NUM_CORES; ++i){
         // Create the input to the threaded_map_func:
         mapper_inputs[i] = new threaded_map_func_input<keytype, valuetype>;
         mapper_inputs[i]->thread_num = i;
@@ -109,20 +110,18 @@ void mapreduce(std::vector<keytype> input_reader (void*), std::pair<keytype, val
         mapper_inputs[i]->parsed_input = &parsed_input;
         mapper_inputs[i]->ret_p = &threaded_mapfunc_retvals[i];
 
-        // And create a thread to run the function.
-        pthread_create(&threads[i], NULL, threaded_map_func<keytype, valuetype>, static_cast<void*>(mapper_inputs[i]));
+        threaded_map_func<keytype, valuetype>(static_cast<void*>(mapper_inputs[i]));
     }
-
+    
     for (int i = 0; i < NUM_CORES; ++i){
-        // Join the threads, and then get their values
-        pthread_join(threads[i], NULL);
-        //vector<pair<keytype, valuetype> > mapped_kv_subVect = threaded_mapfunc_retvals[i];
+
         for (int j = 0; j < threaded_mapfunc_retvals[i].size(); ++j){
             pair<keytype, valuetype> cur;
             cur = threaded_mapfunc_retvals[i][j];
             mapped_kv_pairs.push_back(cur);
         }
     }
+
     for (int i = 0; i < NUM_CORES; ++i){
         delete mapper_inputs[i];
     }
@@ -181,6 +180,7 @@ void mapreduce(std::vector<keytype> input_reader (void*), std::pair<keytype, val
     
     threaded_reduce_func_input<keytype, valuetype>* reducer_inputs[NUM_CORES];
     
+    #pragma omp parallel for
     for (int i = 0; i < NUM_CORES; ++i){
         reducer_inputs[i] = new threaded_reduce_func_input<keytype, valuetype>;
         reducer_inputs[i]->thread_num = i;
@@ -189,13 +189,13 @@ void mapreduce(std::vector<keytype> input_reader (void*), std::pair<keytype, val
         reducer_inputs[i]->mapped_kv_pairs_subVect = &mapped_kv_pairs_subVect[i];
         reducer_inputs[i]->delimiter_indices = &delimiter_indices[i];
 
-        pthread_create(&threads[i], NULL, threaded_reduce_func<keytype, valuetype>, static_cast<void*>(reducer_inputs[i]));
+        threaded_reduce_func<keytype, valuetype>(static_cast<void*>(reducer_inputs[i]));
+
     } 
 
     vector<pair<keytype, valuetype> > reduced_kv_pairs;
 
     for (int i = 0; i < NUM_CORES; ++i){
-        pthread_join(threads[i], NULL);
 
         for (int j = 0; j < threaded_reduce_func_retvals[i].size(); ++j){
             pair<keytype, valuetype> cur_pair = (threaded_reduce_func_retvals[i])[j];
